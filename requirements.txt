@@ -1,0 +1,8 @@
+pygame
+requests
+beautifulsoup4
+ddgs
+numpy
+sounddevice
+faster-whisper
+pycaw; sys_platform == "win32"

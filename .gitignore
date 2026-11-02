@@ -1,0 +1,29 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Secrets
+.env
+*.key
+
+# Music and downloaded files (big, re-add by hand)
+music/*
+!music/.gitkeep
+*.mp3
+*.ogg
+*.wav
+
+# Downloaded speech models and caches
+models/
+*.onnx
+*.bin
+.cache/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
