@@ -21,6 +21,21 @@ EMPTY_PLAY = {"music", "some music", "something", "a song", "some songs", "songs
               "a random song", "something nice", "me something"}
 
 
+LEAD = {"the", "web", "internet", "online", "net", "for", "up", "about", "this", "that", "it",
+        "something", "me", "on", "google"}
+
+
+def _search_query(rest):
+    """'search this up on the web' -> '' (ask what to search); 'search for cats' -> 'cats'."""
+    rest = re.sub(r"\b(on|in|using|via|with) (the )?(web|internet|google|net)\b", " ", rest)
+    words = rest.split()
+    while words and words[0] in LEAD:
+        words.pop(0)
+    while words and words[-1] in ("up", "please"):
+        words.pop()
+    return " ".join(words)
+
+
 def parse(text):
     t = _norm(text)
     if not t:
@@ -41,6 +56,10 @@ def parse(text):
         return ("vol_delta", +1)
     if any(re.search(p, t) for p in DOWN):
         return ("vol_delta", -1)
+
+    m = re.match(r"(?:search|google|look up|lookup|look it up|browse)\b(.*)$", t)
+    if m:
+        return ("web_search", _search_query(m.group(1)))
 
     if re.search(r"\b(exit|quit|close|leave|stop) (?:the |this )?game\b", t):
         return ("game_exit", None)

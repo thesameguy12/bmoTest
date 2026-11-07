@@ -132,7 +132,9 @@ def web_context(q):
 def gather_context(text, route):
     """route(text) -> search query or None (asked to the LLM, see brain.py)."""
     t = text.lower()
-    parts = [f"Current date and time: {datetime.datetime.now():%A, %d %B %Y, %H:%M}"]
+    parts = []
+    if any(w in t for w in ("time", "date", "today", "tonight", "tomorrow", "yesterday", "day", "week", "month", "year")):
+        parts.append(f"Current date and time: {datetime.datetime.now():%A, %d %B %Y, %H:%M}")
     urls = URL_RE.findall(text)
     if any(w in t for w in WEATHER_WORDS):
         parts.append(weather(text))
@@ -141,9 +143,15 @@ def gather_context(text, route):
     elif urls:
         page = read_page(urls[0].rstrip(".,)"))
         parts.append(f"Text of {urls[0]}:\n{page}" if page else f"(Could not read {urls[0]}.)")
-    elif len(text.split()) > 2:
+    elif getattr(config, "WEB_ROUTER", False) and len(text.split()) > 2:
         q = route(text)
         if q:
             print("[web] searching:", q)
             parts.append(web_context(q))
     return "\n".join(parts)
+
+
+def forced_context(query):
+    """Context for an explicit "search the web for X" request."""
+    return (f"Current date and time: {datetime.datetime.now():%A, %d %B %Y, %H:%M}\n"
+            + web_context(query))

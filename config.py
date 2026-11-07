@@ -86,3 +86,12 @@ BUTTONS = {
     "up": "up", "down": "down", "left": "left", "right": "right",
     "green": "z", "red": "x", "triangle": "c",
 }
+
+# Let BMO decide by himself (extra slow model call per question) when to search the web.
+# False = he only searches when you say "search for ..." / "look up ..." (faster)
+WEB_ROUTER = False
+
+# ---------- Touch screen ----------
+TAP_FACES = ["happy", "surprised", "wink"]   # animations picked at random when you tap the screen
+TAP_FACE_SECONDS = 1.5
+DOUBLE_TAP_SECONDS = 0.35                    # two taps within this time = open the text bar

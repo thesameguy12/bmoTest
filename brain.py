@@ -1,4 +1,5 @@
 import json
+import time
 import re
 import requests
 import config
@@ -28,7 +29,7 @@ class Brain:
         self.history = []
 
     def _route(self, text):
-        payload = {"model": config.MODEL, "stream": False,
+        payload = {"model": config.MODEL, "stream": False, "keep_alive": "30m",
                    "messages": [{"role": "system", "content": ROUTER_PROMPT},
                                 {"role": "user", "content": text}],
                    "options": {"temperature": 0, "num_predict": 30, "num_ctx": config.NUM_CTX}}
@@ -39,16 +40,21 @@ class Brain:
         m = re.search(r"SEARCH:\s*(.+)", out)
         return m.group(1).strip().strip('"') if m else None
 
-    def reply_stream(self, user_text):
+    def reply_stream(self, user_text, force_query=None):
         """Yields the answer one sentence at a time so BMO can start talking early."""
-        messages = [{"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "system", "content": "Live info:\n" + tools.gather_context(user_text, self._route)}]
+        t0 = time.time()
+        live = (tools.forced_context(force_query) if force_query else tools.gather_context(user_text, self._route))
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages += self.history[-config.HISTORY_TURNS * 2:]
+        if live.strip():
+            messages.append({"role": "system", "content": "Live info:\n" + live})
         messages.append({"role": "user", "content": user_text})
-        payload = {"model": config.MODEL, "messages": messages, "stream": True,
+        print(f"[timing] context ready after {time.time() - t0:.1f}s")
+        payload = {"model": config.MODEL, "messages": messages, "stream": True, "keep_alive": "30m",
                    "options": {"num_ctx": config.NUM_CTX, "num_predict": config.MAX_TOKENS,
                                "temperature": 0.8}}
         raw, spoken, clean, truncated = "", 0, "", False
+        got_token = False
         try:
             with requests.post(config.OLLAMA_URL, json=payload, stream=True, timeout=300) as r:
                 r.raise_for_status()
@@ -57,6 +63,9 @@ class Brain:
                         continue
                     chunk = json.loads(line)
                     raw += chunk.get("message", {}).get("content", "")
+                    if not got_token:
+                        got_token = True
+                        print(f"[timing] first token after {time.time() - t0:.1f}s")
                     if chunk.get("done_reason") == "length":     # hit MAX_TOKENS mid-sentence
                         truncated = True
                     clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).lstrip()

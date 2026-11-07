@@ -1,6 +1,7 @@
 import queue
 import random
 import re
+import sys
 import threading
 import time
 import pygame
@@ -34,9 +35,14 @@ def main():
     font = pygame.font.Font(None, max(28, size[1] // 18))
     brain, voice, music = Brain(), Voice(), Music()
     clock_ui, subs = ui.IdleClock(size), ui.Subtitles(size)
+    tap_faces = getattr(config, "TAP_FACES", ["happy", "surprised", "wink"])
+    tap_face_seconds = getattr(config, "TAP_FACE_SECONDS", 1.5)
+    double_tap = getattr(config, "DOUBLE_TAP_SECONDS", 0.35)
+    finger_down = getattr(pygame, "FINGERDOWN", -1)
 
     state = {"mode": "idle", "subtitle": "", "sub_until": 0.0,
-             "active_at": time.time(), "pending_game": None}
+             "active_at": time.time(), "pending_game": None, "face": "happy", "face_until": 0.0,
+             "await_search": False, "search_now": None}
     inbox = queue.Queue()
     game = None
 
@@ -55,6 +61,7 @@ def main():
 
     def on_cancel():
         touch()
+        state["await_search"] = False
         if state["mode"] in ("listening", "thinking") and inbox.empty():
             state["mode"] = "idle"
 
@@ -64,6 +71,7 @@ def main():
 
     def say_line(text):
         state["subtitle"] = re.sub(r"[*_#`~]", "", text).strip()
+        print("[BMO]", state["subtitle"])
         state["sub_until"] = 0.0                          # 0 = keep showing
         state["mode"] = "talking"
         voice.speak(text)
@@ -83,6 +91,12 @@ def main():
         elif kind == "unmute":
             audio.unmute()
             sfx.play("volume")
+        elif kind == "web_search":
+            if arg:
+                state["search_now"] = arg
+                return "BMO will look that up!"
+            state["await_search"] = True
+            return "What should BMO search for?"
         elif kind == "game":
             state["pending_game"] = arg
             return random.choice(["Yay! BMO loves games!", "Let's play!"])
@@ -112,14 +126,28 @@ def main():
                     say_line(item[1])
                 else:
                     state["mode"] = "thinking"
-                    cmd = commands.parse(item)
-                    if cmd:
-                        reply = run_command(cmd)
-                        if reply:
-                            say_line(reply)
+                    if state["await_search"]:                 # BMO asked "what should I search for?"
+                        state["await_search"] = False
+                        if re.fullmatch(r"\W*(never ?mind|cancel|forget it|stop)\W*", item.lower()):
+                            say_line("Okay!")
+                        else:
+                            state["search_now"] = item.strip(" .?!")
+                            say_line("BMO will look that up!")
                     else:
-                        for sentence in brain.reply_stream(item):
+                        cmd = commands.parse(item)
+                        if cmd:
+                            reply = run_command(cmd)
+                            if reply:
+                                say_line(reply)
+                        else:
+                            for sentence in brain.reply_stream(item):
+                                say_line(sentence)
+                    q, state["search_now"] = state["search_now"], None
+                    if q:                                     # explicit web search
+                        for sentence in brain.reply_stream(f"What did you find about: {q}?", force_query=q):
                             say_line(sentence)
+                    elif state["await_search"]:
+                        ears.force_wake()                     # listen again for the search words
             except Exception as e:
                 print("[error]", e)
             state["sub_until"] = time.time() + 1.5        # linger, then fade out
@@ -128,7 +156,31 @@ def main():
 
     threading.Thread(target=worker, daemon=True).start()
 
+    def terminal_reader():
+        """Type to BMO in the terminal you started him from: write a line, press Enter."""
+        if sys.stdin is None or sys.stdin.closed:
+            return
+        print("[terminal] you can also type here and press Enter to talk to BMO")
+        while True:
+            try:
+                line = sys.stdin.readline()
+            except Exception:
+                return
+            if not line:                                  # no terminal attached
+                return
+            text = line.strip()
+            if not text:
+                continue
+            if state["mode"] == "idle":
+                submit(text)
+            else:
+                inbox.put(text)                           # BMO is busy, he'll get to it next
+                print("[terminal] BMO is busy, queued")
+
+    threading.Thread(target=terminal_reader, daemon=True).start()
+
     typing, buf, clock_on = False, "", False
+    tap_at, last_tap = None, 0.0
     clock = pygame.time.Clock()
     running = True
     while running:
@@ -162,6 +214,23 @@ def main():
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1) or ev.type == finger_down:
+                if now - last_tap < 0.06:                 # one touch can arrive as a finger AND a mouse event
+                    continue
+                last_tap = now
+                pos = (int(ev.x * size[0]), int(ev.y * size[1])) if ev.type == finger_down else ev.pos
+                touch()
+                if clock_on:                              # first touch only wakes the screen
+                    tap_at = None
+                elif typing:
+                    pass                              # the OS keyboard does the typing
+                elif game is None:
+                    if tap_at is not None and now - tap_at <= double_tap:   # double tap -> text bar + keyboard
+                        tap_at = None
+                        typing, buf = True, ""
+                        pygame.key.start_text_input()    # asks the OS to show its on-screen keyboard
+                    else:
+                        tap_at = now
             elif ev.type == pygame.KEYDOWN:
                 if clock_on:                              # first key press only wakes the screen
                     touch()
@@ -173,8 +242,10 @@ def main():
                         if buf.strip() and state["mode"] == "idle":
                             submit(buf.strip())
                         buf, typing = "", False
+                        pygame.key.stop_text_input()
                     elif ev.key == pygame.K_ESCAPE:
                         buf, typing = "", False
+                        pygame.key.stop_text_input()
                     elif ev.key == pygame.K_BACKSPACE:
                         buf = buf[:-1]
                     elif ev.unicode and ev.unicode.isprintable():
@@ -199,6 +270,12 @@ def main():
                 elif btn == "triangle":
                     ears.force_wake()                     # same as saying "hey BMO"
 
+        if tap_at is not None and now - tap_at > double_tap:     # no second tap came: single tap = make a face
+            tap_at = None
+            if game is None and not typing and state["mode"] == "idle":
+                state["face"] = random.choice(tap_faces)
+                state["face_until"] = now + tap_face_seconds
+
         if game:
             game.update(dt)
 
@@ -217,7 +294,9 @@ def main():
             clock_ui.draw(screen)
         else:
             mode = state["mode"]
-            if mode == "idle" and music.playing:
+            if mode == "idle" and now < state["face_until"]:
+                mode = state["face"]
+            elif mode == "idle" and music.playing:
                 mode = "dancing"
             anim.set(mode)
             anim.update(dt)
@@ -225,10 +304,9 @@ def main():
 
         bottom = size[1]
         if typing:
-            bar = pygame.Rect(0, size[1] - font.get_height() - 24, size[0], font.get_height() + 24)
+            bar = pygame.Rect(0, 0, size[0], font.get_height() + 24)
             pygame.draw.rect(screen, (20, 50, 45), bar)
             screen.blit(font.render("> " + buf + "_", True, (230, 255, 245)), (16, bar.y + 12))
-            bottom = bar.y
         sub = state["subtitle"]
         if (config.SUBTITLES and sub and not clock_on and not overlay
                 and (state["sub_until"] == 0.0 or now < state["sub_until"])):

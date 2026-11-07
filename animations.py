@@ -23,10 +23,10 @@ def _placeholder(name, size):
         s.fill(config.BG_COLOR)
         bob = (int(h * 0.04) if i else 0) if name == "dancing" else 0
         ey = int(h * 0.38) - (int(h * 0.06) if name == "thinking" else 0) + bob
-        ex, r = int(w * 0.17), int(h * (0.06 if name == "listening" else 0.045))
+        ex, r = int(w * 0.17), int(h * (0.06 if name in ("listening", "surprised") else 0.045))
         for sign in (-1, 1):
             cx = w // 2 + sign * ex
-            if name == "idle" and i == 1:          # blink
+            if (name == "idle" and i == 1) or name == "happy" or (name == "wink" and sign == 1):   # blink / closed eyes
                 pygame.draw.line(s, DARK, (cx - r, ey), (cx + r, ey), 8)
             else:
                 pygame.draw.circle(s, DARK, (cx, ey), r)
@@ -34,7 +34,7 @@ def _placeholder(name, size):
         if name == "talking":
             mh = int(h * (0.12 if i == 0 else 0.04))
             pygame.draw.ellipse(s, DARK, (w // 2 - mw // 2, my, mw, mh))
-        elif name == "listening":
+        elif name in ("listening", "surprised"):
             pygame.draw.circle(s, DARK, (w // 2, my + int(h * 0.03)), int(h * 0.04))
         else:
             pygame.draw.arc(s, DARK, (w // 2 - mw // 2, my - int(h * 0.06), mw, int(h * 0.14)),
@@ -70,7 +70,10 @@ class Animation:
 
 class Animator:
     def __init__(self, size):
-        self.anims = {n: Animation(n, c, size) for n, c in config.ANIMATIONS.items()}
+        cfgs = dict(config.ANIMATIONS)
+        for n in ("happy", "surprised", "wink"):      # tap faces; draw happy_1.png ... to replace the placeholders
+            cfgs.setdefault(n, {"frames": [f"{n}_1.png", f"{n}_2.png"], "fps": 2, "loop": True})
+        self.anims = {n: Animation(n, c, size) for n, c in cfgs.items()}
         self.current, self.t = "idle", 0.0
 
     def set(self, name):
